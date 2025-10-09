@@ -67,7 +67,7 @@ run_km <- function(component, clock = "calendar", stratify = FALSE) {
   cat(sprintf("Median survival: %.1f days\n", med))
   cat(sprintf("L10 (S=0.90): %.1f days\n", quant))
   
-  write.csv(summary(fit)$table, paste0("KM_summary_", component, ".csv"), row.names = TRUE)
+  write.csv(summary(fit)$table, paste0("KM_summary_", component, "_", clock, ifelse(stratify, "_pets", ""), ".csv"), row.names = TRUE)
   cat("Saved:", fname, "\n")
 }
 
