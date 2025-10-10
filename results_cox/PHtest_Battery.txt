@@ -1,4 +1,0 @@
-        chisq df       p
-pets   40.795  1 1.7e-10
-carpet  0.222  1    0.64
-GLOBAL 41.115  2 1.2e-09
