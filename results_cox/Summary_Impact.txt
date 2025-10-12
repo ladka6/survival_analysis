@@ -1,0 +1,20 @@
+Call:
+coxph(formula = Surv(time_days, event) ~ pets + carpet, data = data)
+
+  n= 6473, number of events= 91 
+
+           coef exp(coef) se(coef)      z Pr(>|z|)    
+petsYES  2.9310   18.7462   0.3116  9.406  < 2e-16 ***
+carpet  -0.6733    0.5100   0.1025 -6.569 5.08e-11 ***
+---
+Signif. codes:  0 ‘***’ 0.001 ‘**’ 0.01 ‘*’ 0.05 ‘.’ 0.1 ‘ ’ 1
+
+        exp(coef) exp(-coef) lower .95 upper .95
+petsYES     18.75    0.05334   10.1785   34.5255
+carpet       0.51    1.96069    0.4172    0.6235
+
+Concordance= 0.877  (se = 0.016 )
+Likelihood ratio test= 198.4  on 2 df,   p=<2e-16
+Wald test            = 131.8  on 2 df,   p=<2e-16
+Score (logrank) test = 213.5  on 2 df,   p=<2e-16
+
