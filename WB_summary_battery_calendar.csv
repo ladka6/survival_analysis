@@ -1,0 +1,2 @@
+"component","clock","N","events","event_pct","shape_k","scale_lambda","median_est","median_lcl","median_ucl","L10_est","L10_lcl","L10_ucl","AIC_Weibull","AIC_Exponential","dAIC_Exp_minus_WB","logLik_Weibull"
+"battery","calendar",6469,679,10.5,2.14546190759753,2802.24948517803,NA,NA,NA,NA,NA,NA,13090.6188066889,13538.758718243,448.139911554128,-6543.30940334444
