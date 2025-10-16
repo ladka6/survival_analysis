@@ -1,6 +1,5 @@
 ##########################################
-# parametric.R — Parametric Survival (AFT) ONLY — v4 (defansif) + para_ prefix
-# - All outputs (CSV/PNG) are prefixed with "para_" so you can tell they come from Parametric
+# Parametric Survival (AFT)
 ##########################################
 
 suppressPackageStartupMessages({
@@ -13,10 +12,10 @@ suppressPackageStartupMessages({
 
 library(dplyr); library(readr); library(flexsurv); library(survival); library(ggplot2)
 
-# === Minimal KM + Olasılık Grafikleri (tek dosya) ===
+# === Minimal KM + Prob graph===
 .safe_clip <- function(p, eps=1e-9) pmin(pmax(p, eps), 1 - eps)
 
-# df (time,event) -> KM zaman serisi (time, surv)
+# df (time,event) -> KM (time, surv)
 .km_series <- function(df){
   stopifnot(all(c("time","event") %in% names(df)))
   fit <- survfit(Surv(time, event) ~ 1, data = df)
@@ -51,7 +50,7 @@ library(dplyr); library(readr); library(flexsurv); library(survival); library(gg
          p, width=7, height=4.6, dpi=160)
 }
 
-# Opsiyonel PP-plot (parametrik fit karşılaştırması)
+# PP-plot (parametric fit comparison)
 .plot_pp <- function(fit, df, comp, label, clock, out_dir="."){
   d <- df[df$event==1 & is.finite(df$time) & df$time>0, , drop=FALSE]
   if (nrow(d) < 3) return(invisible(NULL))
@@ -98,7 +97,7 @@ plot_km_vs_weibull <- function(fit_wb, df, comp, clock="calendar", out_dir="."){
          p, width=7.2, height=4.6, dpi=220)
 }
 
-# Tek çağrıyla tüm grafikleri üret
+
 emit_km_probability_plots <- function(df, comp, clock="calendar", out_dir=".", fit_wb=NULL, fit_exp=NULL){
   km_ts <- .km_series(df)
   .plot_weibull_just(km_ts, comp, clock, out_dir)
@@ -106,14 +105,14 @@ emit_km_probability_plots <- function(df, comp, clock="calendar", out_dir=".", f
   if (!is.null(fit_wb))  .plot_pp(fit_wb,  df, comp, "Weibull",    clock, out_dir)
   if (!is.null(fit_exp)) .plot_pp(fit_exp, df, comp, "Exponential", clock, out_dir)
 }
-# === /Minimal KM + Olasılık Grafikleri ===
+# === /Minimal KM + prob graph ===
 
 OUT_DIR <- "."
 DATA_CANDIDATES <- c("DirtSlurper3100.csv","DirtSlurper3100 (1).csv","DirtSlurper3100_clean.csv")
 USE_EXISTING_KM <- TRUE
 PLOT_MODEL_ONLY <- TRUE
 
-# ---------- utils.R (KM ile aynı) ----------
+# ---------- utils.R   ----------
 source("utils.R")   # read_dirt(), prepare_surv_data()
 
 load_data_like_km <- function(){
@@ -125,7 +124,7 @@ load_data_like_km <- function(){
   stop("CSV not found.")
 }
 
-# ---------- yardımcılar ----------
+# ---------- helpers ----------
 make_formula <- function(df){
   cand <- c("pets","carpet_score","total_usage_time")
   rhs  <- cand[cand %in% names(df)]
@@ -133,7 +132,7 @@ make_formula <- function(df){
   else as.formula(paste0("Surv(time,event) ~ ", paste(rhs, collapse=" + ")))
 }
 
-# tip-uyumlu newdata
+# newdata
 build_newdata <- function(df){
   nd <- list()
   for (nm in intersect(c("pets","carpet_score","total_usage_time"), names(df))){
@@ -151,7 +150,7 @@ build_newdata <- function(df){
   as.data.frame(nd)
 }
 
-# koef tablosu güvenli okuma
+# koef table
 safe_coef_table <- function(fit){
   cf_raw <- tryCatch(summary(fit)$coefficients, error=function(e) NULL)
   if (is.null(cf_raw)) return(data.frame(term=character(), est=numeric(), se=numeric(), lcl=numeric(), ucl=numeric()))
@@ -210,7 +209,7 @@ read_existing_km <- function(component){
   NULL
 }
 
-# ---------- veri temizliği ----------
+# ---------- data cleansing ----------
 sanitize_df <- function(df){
   keep <- intersect(c("time","event","pets","carpet_score","total_usage_time"), names(df))
   df <- df[, keep, drop=FALSE]
@@ -234,7 +233,7 @@ sanitize_df <- function(df){
   df
 }
 
-# ---------- güvenli fit yardımcıları ----------
+
 fit_exp_safe <- function(form, df){
   tryCatch(flexsurvreg(formula=form, data=df, dist="exponential"), error=function(e) NULL)
 }
@@ -258,7 +257,7 @@ DATA_CANDIDATES <- c("DirtSlurper3100.csv","DirtSlurper3100 (1).csv","DirtSlurpe
 USE_EXISTING_KM <- TRUE
 PLOT_MODEL_ONLY <- TRUE
 
-# ---------- ana koşucu ----------
+# ---------- main----------*
 run_component <- function(comp, clock="calendar"){
   raw <- load_data_like_km()
   df  <- prepare_surv_data(raw, comp, clock=clock)
@@ -314,12 +313,12 @@ run_component <- function(comp, clock="calendar"){
   # --- Probability (Justification) Plots from KM + PP vs Models ---
   try({
     emit_km_probability_plots(
-      df      = df,           # run_component içindeki veri (time,event içermeli)
-      comp    = comp,         # "battery" | "ir" | "impact"
-      clock   = clock,        # "calendar" vb.
-      out_dir = OUT_DIR,      # mevcut çıktı klasörün
-      fit_wb  = fit_wb,       # varsa; yoksa NULL
-      fit_exp = fit_exp       # varsa; yoksa NULL
+      df      = df,           # 
+      comp    = comp,         # "battery" | "ir" | "impactr"
+      clock   = clock,        # "calendar" etc
+      out_dir = OUT_DIR,      # 
+      fit_wb  = fit_wb,       # ow null
+      fit_exp = fit_exp       # ow Null
     )
   }, silent = TRUE)
 
