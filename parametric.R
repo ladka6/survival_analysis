@@ -1,151 +1,31 @@
-##########################################
-# Parametric Survival (AFT)
-##########################################
 
-suppressPackageStartupMessages({
-  if (!require("dplyr"))     install.packages("dplyr")
-  if (!require("readr"))     install.packages("readr")
-  if (!require("flexsurv"))  install.packages("flexsurv")
-  if (!require("survival"))  install.packages("survival")
-  if (!require("ggplot2"))   install.packages("ggplot2")
-})
-
-library(dplyr); library(readr); library(flexsurv); library(survival); library(ggplot2)
-
-# === Minimal KM + Prob graph===
-.safe_clip <- function(p, eps=1e-9) pmin(pmax(p, eps), 1 - eps)
-
-# df (time,event) -> KM (time, surv)
-.km_series <- function(df){
-  stopifnot(all(c("time","event") %in% names(df)))
-  fit <- survfit(Surv(time, event) ~ 1, data = df)
-  d <- data.frame(time = fit$time, surv = fit$surv)
-  d <- d[is.finite(d$time) & d$time > 0 & is.finite(d$surv), , drop=FALSE]
-  d
+# ========== 0) Packages ==========
+pkgs <- c("survival","survminer","ggplot2","dplyr","scales","ragg")
+for (p in pkgs) if (!requireNamespace(p, quietly = TRUE)) {
+  install.packages(p, repos = "https://cloud.r-project.org")
 }
+library(survival)
+library(survminer)
+library(ggplot2)
+library(dplyr)
+library(scales)
+agg_png <- ragg::agg_png 
 
-.plot_weibull_just <- function(km_ts, comp, clock, out_dir="."){
-  if (nrow(km_ts) < 3) return(invisible(NULL))
-  d <- within(km_ts, { surv <- .safe_clip(surv); X <- log(time); Y <- log(-log(surv)) })
-  p <- ggplot(d, aes(X, Y)) +
-    geom_point(alpha=0.8) +
-    geom_smooth(method="lm", se=FALSE, linewidth=0.7) +
-    labs(title=paste0(toupper(comp),": Weibull justification"),
-         x="log(t)", y="log(-log S(t))") +
-    theme_minimal()
-  ggsave(file.path(out_dir, paste0("para_Weibull_just_", comp, "_", clock, ".png")),
-         p, width=7, height=4.6, dpi=160)
-}
+# ========== 1) Utils & data ==========
+source("utils.R")  
 
-.plot_exp_just <- function(km_ts, comp, clock, out_dir="."){
-  if (nrow(km_ts) < 3) return(invisible(NULL))
-  d <- within(km_ts, { surv <- .safe_clip(surv) })
-  p <- ggplot(d, aes(time, log(surv))) +
-    geom_point(alpha=0.8) +
-    geom_smooth(method="lm", se=FALSE, linewidth=0.7) +
-    labs(title=paste0(toupper(comp),": Exponential justification"),
-         x="Time", y="log S(t)") +
-    theme_minimal()
-  ggsave(file.path(out_dir, paste0("para_Exp_just_", comp, "_", clock, ".png")),
-         p, width=7, height=4.6, dpi=160)
-}
+df <- read_dirt("DirtSlurper3100.csv")
+cat("Dataset:", nrow(df), "rows\n")
 
-# PP-plot (parametric fit comparison)
-.plot_pp <- function(fit, df, comp, label, clock, out_dir="."){
-  d <- df[df$event==1 & is.finite(df$time) & df$time>0, , drop=FALSE]
-  if (nrow(d) < 3) return(invisible(NULL))
-  d <- d[order(d$time), ]
-  n <- nrow(d)
-  d$F_emp <- (seq_len(n) - 0.5) / n
-  s <- summary(fit, type="cdf", t=d$time)[[1]]
-  d$F_mod <- .safe_clip(s$est)
-  p <- ggplot(d, aes(F_emp, F_mod)) +
-    geom_point(alpha=0.85) +
-    geom_abline(slope=1, intercept=0, linetype="dashed") +
-    labs(title=paste0(toupper(comp),": PP-Plot (",label,")"),
-         x="Empirical CDF", y="Model CDF") +
-    theme_minimal()
-  ggsave(file.path(out_dir, paste0("para_PP_", label, "_", comp, "_", clock, ".png")),
-         p, width=6.4, height=6.0, dpi=160)
-}
-
-# --- KM vs Weibull overlay (KM step in BLUE, Weibull model in RED) ---
-plot_km_vs_weibull <- function(fit_wb, df, comp, clock="calendar", out_dir="."){
-  if (is.null(fit_wb)) return(invisible(NULL))
-
-  # KM step
-  km <- survfit(Surv(time, event) ~ 1, data = df)
-  km_df <- data.frame(time = c(0, km$time), surv = c(1, km$surv))
-
-  # Weibull model on same grid (or fallback grid)
-  newd  <- build_newdata(df)
-  tgrid <- sort(unique(km_df$time))
-  if (length(tgrid) < 2) tgrid <- seq(0, quantile(df$time, 0.995, na.rm=TRUE), length.out=200)
-  cur   <- summary(fit_wb, type="survival", newdata=newd, t=tgrid)[[1]]
-  wb_df <- data.frame(time = cur$time, surv = cur$est)
-
-  p <- ggplot() +
-    geom_step(data=km_df, aes(time, surv, color="KM"), linewidth=1.1) +           # BLUE
-    geom_line(data=wb_df, aes(time, surv, color="Weibull model"), linewidth=1.2) +# RED
-    scale_color_manual(values = c("KM"="#377EB8", "Weibull model"="#E41A1C"), name = "Curve") +
-    labs(title = paste0(toupper(comp), ": KM vs Weibull (", clock, ")"),
-         x = "Time", y = "S(t)") +
-    theme_minimal(base_size = 12) +
-    theme(panel.grid.minor = element_blank(),
-          legend.position = "right")
-  ggsave(file.path(out_dir, paste0("para_KM_vs_Weibull_", comp, "_", clock, ".png")),
-         p, width=7.2, height=4.6, dpi=220)
-}
-
-
-emit_km_probability_plots <- function(df, comp, clock="calendar", out_dir=".", fit_wb=NULL, fit_exp=NULL){
-  km_ts <- .km_series(df)
-  .plot_weibull_just(km_ts, comp, clock, out_dir)
-  .plot_exp_just(km_ts, comp, clock, out_dir)
-  if (!is.null(fit_wb))  .plot_pp(fit_wb,  df, comp, "Weibull",    clock, out_dir)
-  if (!is.null(fit_exp)) .plot_pp(fit_exp, df, comp, "Exponential", clock, out_dir)
-}
-# === /Minimal KM + prob graph ===
-
-OUT_DIR <- "."
-DATA_CANDIDATES <- c("DirtSlurper3100.csv","DirtSlurper3100 (1).csv","DirtSlurper3100_clean.csv")
-USE_EXISTING_KM <- TRUE
-PLOT_MODEL_ONLY <- TRUE
-
-# ---------- utils.R   ----------
-source("utils.R")   # read_dirt(), prepare_surv_data()
-
-load_data_like_km <- function(){
-  for(p in DATA_CANDIDATES) if (file.exists(p)) {
-    df <- read_dirt(p); cat(sprintf("Loaded %d rows × %d columns from %s.\n", nrow(df), ncol(df), p)); return(df)
-  }
-  csvs <- list.files(pattern="\\.csv$", ignore.case=TRUE)
-  if (length(csvs)>=1){ df <- read_dirt(csvs[1]); cat(sprintf("Loaded %d rows × %d columns from %s.\n", nrow(df), ncol(df), csvs[1])); return(df) }
-  stop("CSV not found.")
-}
-
-# ---------- helpers ----------
-make_formula <- function(df){
-  cand <- c("pets","carpet_score","total_usage_time")
-  rhs  <- cand[cand %in% names(df)]
-  if (length(rhs)==0) as.formula("Surv(time,event) ~ 1")
-  else as.formula(paste0("Surv(time,event) ~ ", paste(rhs, collapse=" + ")))
-}
-
-# newdata
-build_newdata <- function(df){
-  nd <- list()
-  for (nm in intersect(c("pets","carpet_score","total_usage_time"), names(df))){
-    x <- df[[nm]]
-    if (is.logical(x)){
-      mode_val <- as.logical(names(sort(table(x), decreasing=TRUE))[1]); nd[[nm]] <- mode_val
-    } else if (is.factor(x)){
-      mode_val <- names(sort(table(x), decreasing=TRUE))[1]; nd[[nm]] <- factor(mode_val, levels=levels(x))
-    } else if (is.numeric(x)){
-      nd[[nm]] <- mean(x, na.rm=TRUE)
-    } else {
-      mode_val <- names(sort(table(x), decreasing=TRUE))[1]; nd[[nm]] <- mode_val
-    }
+# ========== 2) Helpers ==========
+normalize_event <- function(x) {
+  if (is.logical(x)) {
+    y <- x
+  } else if (is.numeric(x)) {
+    y <- x != 0
+  } else {
+    xc <- toupper(trimws(as.character(x)))
+    y <- xc %in% c("1","TRUE","T","Y","YES","DAMAGE","FAIL","FAILED","EVENT")
   }
   as.data.frame(nd)
 }
@@ -257,14 +137,10 @@ DATA_CANDIDATES <- c("DirtSlurper3100.csv","DirtSlurper3100 (1).csv","DirtSlurpe
 USE_EXISTING_KM <- TRUE
 PLOT_MODEL_ONLY <- TRUE
 
-# ---------- main----------*
-run_component <- function(comp, clock="calendar"){
-  raw <- load_data_like_km()
-  df  <- prepare_surv_data(raw, comp, clock=clock)
-  df  <- sanitize_df(df)
+  ev <- sum(data$event) 
+  if (ev == 0L) { warning("All censored (no failures) for ", component, " — skipping."); return(invisible(NULL)) }
 
-  n_ev <- sum(df$event, na.rm=TRUE)
-  form <- make_formula(df)
+  surv_obj <- create_surv(data)
 
   fit_exp <- fit_exp_safe(form, df)
   fit_wb  <- if (n_ev >= 3) fit_wb_safe(form, df) else NULL
@@ -282,51 +158,71 @@ run_component <- function(comp, clock="calendar"){
   if (!is.null(fit_exp)) tr_out <- dplyr::bind_rows(tr_out, tidy_time_ratios(fit_exp) |> dplyr::mutate(model="Exponential", component=comp, clock=clock))
   write.csv(tr_out, file.path(OUT_DIR, paste0("para_time_ratios_",comp,"_",clock,".csv")), row.names=FALSE)
 
-  nd <- build_newdata(df)
-  L10_wb  <- if (!is.null(fit_wb))  get_L10(fit_wb,  newdata=nd) else c(L10=NA, L10_lcl=NA, L10_ucl=NA)
-  L10_exp <- if (!is.null(fit_exp)) get_L10(fit_exp, newdata=nd) else c(L10=NA, L10_lcl=NA, L10_ucl=NA)
+  # ---- Parametric Weibull curve ----
+  t_max  <- max(data$time, na.rm = TRUE)
+  t_grid <- seq(0, t_max, length.out = 400)
+  S_wb   <- exp(- (t_grid / pars$scale)^pars$shape)
+  wb_df  <- data.frame(time = t_grid, surv = S_wb)
 
-  km_ref <- read_existing_km(comp); km_L10 <- NA_real_; km_note <- "KM summary not found"
-  if (!is.null(km_ref)) {
-    nmz <- tolower(names(km_ref))
-    if ("l10" %in% nmz)      km_L10 <- suppressWarnings(as.numeric(km_ref[[which(nmz=="l10")]][1]))
-    if ("l10_days" %in% nmz) km_L10 <- suppressWarnings(as.numeric(km_ref[[which(nmz=="l10_days")]][1]))
-    km_note <- "KM summary loaded"
+  # ---- Plot: KM + Weibull overlay ----
+  plt <- ggsurvplot(
+    sf_km,
+    data = data,
+    conf.int = TRUE,
+    risk.table = FALSE,   
+    ggtheme = theme_minimal(),
+    title = paste0("Weibull vs KM — ", toupper(component)),
+    xlab = ifelse(clock=="calendar","Time (days)","Usage (hours)"),
+    ylab = "Survival probability S(t)"
+  )
+  plt$plot <- plt$plot +
+    geom_line(data = wb_df, aes(x = time, y = surv), linewidth = 1, color = "firebrick3") +
+    annotate("text", x = t_max * 0.75, y = 0.1, label = "Weibull fit", color = "firebrick3", hjust = 0)
+
+  # ---- Diagnostic: Weibull probability plot ----
+  diag_df <- km_diag_points(sf_km)
+  if (!is.null(diag_df)) {
+    r2 <- summary(lm(y ~ x, data = diag_df))$r.squared
+    diag_plot <- ggplot(diag_df, aes(x, y)) +
+      geom_point(alpha = 0.6) + geom_smooth(method = "lm", se = FALSE) +
+      labs(title = paste0("Weibull probability plot — ", toupper(component),
+                          sprintf("  (R^2 = %.3f)", r2)),
+           x = "log(time)", y = "log(-log(Ŝ(t)))") +
+      theme_minimal()
+  } else {
+    diag_plot <- ggplot() + theme_void() + labs(title = "Diagnostic unavailable (insufficient KM points)")
   }
 
-  sum_tbl <- data.frame(
-    component=comp, clock=clock,
-    logLik_Weibull     = if (!is.null(fit_wb))  as.numeric(logLik(fit_wb))  else NA_real_,
-    logLik_Exponential = if (!is.null(fit_exp)) as.numeric(logLik(fit_exp)) else NA_real_,
-    AIC_Weibull=AIC_wb, AIC_Exponential=AIC_exp,
-    dAIC_Exp_minus_WB = if (is.na(AIC_wb) || is.na(AIC_exp)) NA_real_ else AIC_exp - AIC_wb,
-    L10_Weibull=L10_wb["L10"],  L10_Weibull_lcl=L10_wb["L10_lcl"], L10_Weibull_ucl=L10_wb["L10_ucl"],
-    L10_Exponential=L10_exp["L10"], L10_Exp_lcl=L10_exp["L10_lcl"], L10_Exp_ucl=L10_exp["L10_ucl"],
-    KM_L10_ref=km_L10, KM_note=km_note,
-    n_events = n_ev, n_rows = nrow(df)
+  # ---- Save PNGs ----
+  ggsave(paste0("WB_", component, "_", clock, ".png"),
+         plt$plot, width = 7, height = 5, dpi = 300, device = agg_png)
+  ggsave(paste0("WB_diag_", component, "_", clock, ".png"),
+         diag_plot, width = 6.5, height = 5, dpi = 300, device = agg_png)
+
+  res <- list(
+    component           = as.character(component),
+    clock               = as.character(clock),
+    N                   = as.integer(nrow(data)),
+    events              = as.integer(ev),
+    event_pct           = as.numeric(round(100 * ev / nrow(data), 1)),
+    shape_k             = as.numeric(pars$shape),
+    scale_lambda        = as.numeric(pars$scale),
+    median_est          = as.numeric(q50["est"]),
+    median_lcl          = as.numeric(q50["lcl"]),
+    median_ucl          = as.numeric(q50["ucl"]),
+    L10_est             = as.numeric(q90["est"]),
+    L10_lcl             = as.numeric(q90["lcl"]),
+    L10_ucl             = as.numeric(q90["ucl"]),
+    AIC_Weibull         = as.numeric(AIC_wb),
+    AIC_Exponential     = as.numeric(AIC_exp),
+    dAIC_Exp_minus_WB   = as.numeric(dAIC),
+    logLik_Weibull      = as.numeric(logLik(fit_wb))
   )
-  write.csv(sum_tbl, file.path(OUT_DIR, paste0("para_summary_",comp,"_",clock,".csv")), row.names=FALSE)
+  out <- as.data.frame(res, stringsAsFactors = FALSE, optional = TRUE)
+  row.names(out) <- NULL  
+  write.csv(out, paste0("WB_summary_", component, "_", clock, ".csv"), row.names = FALSE)
 
-  if (!is.null(fit_wb))  plot_model_only(fit_wb,  df, comp, paste0("Weibull_",clock))
-  if (!is.null(fit_exp)) plot_model_only(fit_exp, df, comp, paste0("Exponential_",clock))
-
-  # --- Probability (Justification) Plots from KM + PP vs Models ---
-  try({
-    emit_km_probability_plots(
-      df      = df,           # 
-      comp    = comp,         # "battery" | "ir" | "impactr"
-      clock   = clock,        # "calendar" etc
-      out_dir = OUT_DIR,      # 
-      fit_wb  = fit_wb,       # ow null
-      fit_exp = fit_exp       # ow Null
-    )
-  }, silent = TRUE)
-
-  cat("\n===", toupper(comp), "(", clock, ") ===\n")
-  print(aic_tbl); print(utils::head(tr_out)); print(sum_tbl)
-
-  # KM vs Weibull overlay (only Weibull)
-  if (!is.null(fit_wb)) plot_km_vs_weibull(fit_wb, df, comp, clock, OUT_DIR)
+  
 }
 
 for (comp in c("battery","ir","impact")) run_component(comp, clock="calendar")
