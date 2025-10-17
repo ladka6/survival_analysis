@@ -1,0 +1,4 @@
+"component","clock","logLik_Weibull","logLik_Exponential","AIC_Weibull","AIC_Exponential","dAIC_Exp_minus_WB","L10_Weibull","L10_Weibull_lcl","L10_Weibull_ucl","L10_Exponential","L10_Exp_lcl","L10_Exp_ucl","KM_L10_ref","KM_note","n_events","n_rows"
+"battery","calendar",-5358.2961064019,-5507.34343838864,10720.5922128038,11022.6868767773,302.094663973496,465.281722510128,434.182331607119,497.013740356809,346.765144034632,279.802711775053,424.718859236669,NA,"KM summary not found",679,6473
+
+

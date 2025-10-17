@@ -27,66 +27,136 @@ normalize_event <- function(x) {
     xc <- toupper(trimws(as.character(x)))
     y <- xc %in% c("1","TRUE","T","Y","YES","DAMAGE","FAIL","FAILED","EVENT")
   }
-  y[is.na(y)] <- FALSE
-  y
+  as.data.frame(nd)
 }
 
-aft_to_weibull <- function(fit) {
-  stopifnot(inherits(fit, "survreg"))
-  list(shape = as.numeric(1/fit$scale),
-       scale = as.numeric(exp(unname(coef(fit)[1]))))
+# koef table
+safe_coef_table <- function(fit){
+  cf_raw <- tryCatch(summary(fit)$coefficients, error=function(e) NULL)
+  if (is.null(cf_raw)) return(data.frame(term=character(), est=numeric(), se=numeric(), lcl=numeric(), ucl=numeric()))
+  cf <- as.data.frame(cf_raw, stringsAsFactors=FALSE)
+  if (nrow(cf)==0 || ncol(cf)==0) return(data.frame(term=character(), est=numeric(), se=numeric(), lcl=numeric(), ucl=numeric()))
+  cn <- tolower(gsub("[^a-z0-9]+","", colnames(cf))); colnames(cf) <- cn
+  selcol <- function(cands){ x <- intersect(cands, colnames(cf)); if (length(x)) x[1] else NA_character_ }
+  est <- selcol(c("est","estimate","coef","beta")); se <- selcol(c("se","stderr","secoef"))
+  lcl <- selcol(c("lcl","lower","lower95","l95"));  ucl <- selcol(c("ucl","upper","upper95","u95"))
+  if (is.na(est)) return(data.frame(term=character(), est=numeric(), se=numeric(), lcl=numeric(), ucl=numeric()))
+  ton <- function(z) suppressWarnings(as.numeric(z))
+  out <- data.frame(term=rownames(cf),
+                    est=ton(cf[[est]]),
+                    se =if(!is.na(se))  ton(cf[[se]])  else NA_real_,
+                    lcl=if(!is.na(lcl)) ton(cf[[lcl]]) else NA_real_,
+                    ucl=if(!is.na(ucl)) ton(cf[[ucl]]) else NA_real_,
+                    stringsAsFactors=FALSE)
+  rownames(out) <- NULL; out
 }
 
-weibull_quantile_ci <- function(fit, p, alpha = 0.05) {
-  pr <- predict(fit, type = "quantile", p = 1 - p, se.fit = TRUE)
-  t  <- as.numeric(pr$fit)
-  se <- as.numeric(pr$se.fit)
-  z  <- qnorm(1 - alpha/2)
-  c(est = t, lcl = pmax(0, t - z*se), ucl = t + z*se)
+tidy_time_ratios <- function(fit){
+  cf <- safe_coef_table(fit); if (nrow(cf)==0) return(cf)
+  keep <- c("(Intercept)","intercept","pets","carpet_score","total_usage_time")
+  cf2 <- cf[ cf$term %in% keep | grepl("pets|carpet|usage|total_usage", cf$term), , drop=FALSE ]
+  if (nrow(cf2)==0) return(cf2)
+  cf2$time_ratio <- exp(cf2$est); cf2$lower_tr <- exp(cf2$lcl); cf2$upper_tr <- exp(cf2$ucl)
+  dplyr::select(cf2, term, est, se, time_ratio, lower_tr, upper_tr)
 }
 
-km_diag_points <- function(sf) {
-  S <- sf$surv; tt <- sf$time
-  keep <- which(S > 0 & S < 1 & tt > 0)
-  if (!length(keep)) return(NULL)
-  data.frame(x = log(tt[keep]), y = log(-log(S[keep])))
+get_L10 <- function(fit, newdata=NULL){
+  s <- summary(fit, type="quantile", quantiles=0.10, newdata=newdata)
+  ton <- function(z) suppressWarnings(as.numeric(z))
+  if (is.list(s)) c(L10=ton(s[[1]]$est), L10_lcl=ton(s[[1]]$lcl), L10_ucl=ton(s[[1]]$ucl))
+  else            c(L10=ton(s[,"est"]),  L10_lcl=ton(s[,"lcl"]),  L10_ucl=ton(s[,"ucl"]))
 }
 
-# ========== 3) Core runner ==========
-run_weibull <- function(component, clock = "calendar") {
-  cat("\n====================================================\n")
-  cat("Component:", toupper(component), " | Clock:", clock, "\n")
-  cat("====================================================\n")
+plot_model_only <- function(fit, d, comp, label){
+  if (!PLOT_MODEL_ONLY) return(invisible(NULL))
+  newd <- build_newdata(d)
+  tgrid <- seq(0, quantile(d$time, 0.995, na.rm=TRUE), length.out=200)
+  cur   <- summary(fit, type="survival", newdata=newd, t=tgrid)[[1]]
+  df    <- data.frame(time=cur$time, surv=cur$est)
+  p <- ggplot(df, aes(time, surv)) + geom_line(linewidth=0.7) +
+       labs(title=paste0(toupper(comp), ": ", label, " (model-only)"),
+            x="Time", y="S(t)") + theme_minimal()
+  file <- file.path(OUT_DIR, paste0("para_Model_only_", label, "_", comp, ".png"))
+  ggsave(file, p, width=6.5, height=4.2, dpi=160)
+  file
+}
 
-  data <- prepare_surv_data(df, component, clock) %>%
-          filter(!is.na(time) & time > 0)
+read_existing_km <- function(component){
+  if (!USE_EXISTING_KM) return(NULL)
+  for (f in c(paste0("KM_summary_",component,"_calendar.csv"),
+              paste0("KM_summary_",component,".csv")))
+    if (file.exists(f)) return(tryCatch(readr::read_csv(f, show_col_types=FALSE), error=function(e) NULL))
+  NULL
+}
 
-  if (!"event" %in% names(data)) stop("ERROR: 'event' column missing after prepare_surv_data().")
-  data$event <- normalize_event(data$event)
+# ---------- data cleansing ----------
+sanitize_df <- function(df){
+  keep <- intersect(c("time","event","pets","carpet_score","total_usage_time"), names(df))
+  df <- df[, keep, drop=FALSE]
+  for (nm in intersect(c("carpet_score","total_usage_time"), names(df)))
+    df[[nm]] <- suppressWarnings(as.numeric(df[[nm]]))
+  df$event <- as.integer(df$event)
+  df <- df[!is.na(df$time) & df$time >= 0, , drop=FALSE]
+  df$time[df$time==0] <- .Machine$double.eps
+  # drop zero-variance covariates
+  zvars <- sapply(df[, setdiff(colnames(df), c("time","event")), drop=FALSE],
+                  function(x){ if(is.numeric(x)) sd(x, na.rm=TRUE) else if(is.logical(x)) length(unique(x[!is.na(x)])) else if(is.factor(x)) length(levels(x)) else NA })
+  dropcols <- names(zvars)[ (!is.na(zvars)) & (zvars==0 | zvars==1) ]
+  if (length(dropcols)) df <- df[, setdiff(colnames(df), dropcols), drop=FALSE]
+  # drop rows with non-finite numerics
+  numc <- intersect(c("carpet_score","total_usage_time"), names(df))
+  if (length(numc)){
+    ok <- rep(TRUE, nrow(df))
+    for (nm in numc) ok <- ok & (is.na(df[[nm]]) | is.finite(df[[nm]]))
+    df <- df[ok, , drop=FALSE]
+  }
+  df
+}
 
-  if (nrow(data) == 0) { warning("No usable rows for ", component); return(invisible(NULL)) }
+
+fit_exp_safe <- function(form, df){
+  tryCatch(flexsurvreg(formula=form, data=df, dist="exponential"), error=function(e) NULL)
+}
+
+fit_wb_safe <- function(form, df){
+  form0 <- as.formula("Surv(time,event) ~ 1")
+  fit0  <- tryCatch(flexsurvreg(formula=form0, data=df, dist="weibull"), error=function(e) NULL)
+  inits <- NULL
+  if (!is.null(fit0)) {
+    par0 <- coef(fit0)
+    inits <- c(par0[ c("shape","scale") ], rep(0, length(attr(terms(form), "term.labels"))))
+  }
+  fit1 <- tryCatch(flexsurvreg(formula=form, data=df, dist="weibull",
+                               inits=inits, hessian=FALSE), error=function(e) NULL)
+  if (!is.null(fit1)) return(fit1)
+  tryCatch(flexsurvreg(formula=form0, data=df, dist="weibull"), error=function(e) NULL)
+}
+
+OUT_DIR <- "."
+DATA_CANDIDATES <- c("DirtSlurper3100.csv","DirtSlurper3100 (1).csv","DirtSlurper3100_clean.csv")
+USE_EXISTING_KM <- TRUE
+PLOT_MODEL_ONLY <- TRUE
 
   ev <- sum(data$event) 
   if (ev == 0L) { warning("All censored (no failures) for ", component, " — skipping."); return(invisible(NULL)) }
 
   surv_obj <- create_surv(data)
 
-  # ---- Weibull AFT ----
-  fit_wb <- survreg(surv_obj ~ 1, data = data, dist = "weibull")
-  pars   <- aft_to_weibull(fit_wb)
+  fit_exp <- fit_exp_safe(form, df)
+  fit_wb  <- if (n_ev >= 3) fit_wb_safe(form, df) else NULL
 
-  # Key quantiles + CI
-  q50 <- weibull_quantile_ci(fit_wb, p = 0.50)
-  q90 <- weibull_quantile_ci(fit_wb, p = 0.90)
+  AIC_wb  <- if (!is.null(fit_wb)) AIC(fit_wb) else NA_real_
+  AIC_exp <- if (!is.null(fit_exp)) AIC(fit_exp) else NA_real_
 
-  # Exponential comparison
-  fit_exp <- try(survreg(surv_obj ~ 1, data = data, dist = "exponential"), silent = TRUE)
-  AIC_wb  <- AIC(fit_wb)
-  AIC_exp <- if (inherits(fit_exp, "survreg")) AIC(fit_exp) else NA_real_
-  dAIC    <- if (is.na(AIC_exp)) NA_real_ else (AIC_exp - AIC_wb)
+  aic_tbl <- data.frame(component=comp, clock=clock,
+                        AIC_Weibull=AIC_wb, AIC_Exponential=AIC_exp,
+                        dAIC_Exp_minus_WB = if (is.na(AIC_wb) || is.na(AIC_exp)) NA_real_ else AIC_exp - AIC_wb)
+  write.csv(aic_tbl, file.path(OUT_DIR, paste0("para_AIC_",comp,"_",clock,".csv")), row.names=FALSE)
 
-  # ---- KM (nonparametric) ----
-  sf_km <- survfit(Surv(time, event) ~ 1, data = data)
+  tr_out <- data.frame()
+  if (!is.null(fit_wb))  tr_out <- dplyr::bind_rows(tr_out, tidy_time_ratios(fit_wb)  |> dplyr::mutate(model="Weibull",    component=comp, clock=clock))
+  if (!is.null(fit_exp)) tr_out <- dplyr::bind_rows(tr_out, tidy_time_ratios(fit_exp) |> dplyr::mutate(model="Exponential", component=comp, clock=clock))
+  write.csv(tr_out, file.path(OUT_DIR, paste0("para_time_ratios_",comp,"_",clock,".csv")), row.names=FALSE)
 
   # ---- Parametric Weibull curve ----
   t_max  <- max(data$time, na.rm = TRUE)
@@ -155,5 +225,5 @@ run_weibull <- function(component, clock = "calendar") {
   
 }
 
-# ========== 4) Run all three components ==========
-for (comp in c("battery","ir","impact")) run_weibull(comp, clock = "calendar")
+for (comp in c("battery","ir","impact")) run_component(comp, clock="calendar")
+cat("\nParametric finished — utils.R pipeline reused (v4). Outputs prefixed with para_.\n")
