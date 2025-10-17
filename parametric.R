@@ -1,12 +1,3 @@
-##########################################
-# weibull_analysis.R — Parametric Weibull (AFT), FINAL CLEAN
-# Requires: utils.R -> read_dirt(), prepare_surv_data(), create_surv()
-# Data: DirtSlurper3100.csv  (same folder)
-# Outputs (same folder):
-#   WB_<component>_calendar.png
-#   WB_diag_<component>_calendar.png
-#   WB_summary_<component>_calendar.csv
-##########################################
 
 # ========== 0) Packages ==========
 pkgs <- c("survival","survminer","ggplot2","dplyr","scales","ragg")
@@ -18,10 +9,10 @@ library(survminer)
 library(ggplot2)
 library(dplyr)
 library(scales)
-agg_png <- ragg::agg_png  # macOS: no X11 needed
+agg_png <- ragg::agg_png 
 
 # ========== 1) Utils & data ==========
-source("utils.R")  # read_dirt(), prepare_surv_data(), create_surv()
+source("utils.R")  
 
 df <- read_dirt("DirtSlurper3100.csv")
 cat("Dataset:", nrow(df), "rows\n")
@@ -75,10 +66,9 @@ run_weibull <- function(component, clock = "calendar") {
 
   if (nrow(data) == 0) { warning("No usable rows for ", component); return(invisible(NULL)) }
 
-  ev <- sum(data$event)  # integer (no NA)
+  ev <- sum(data$event) 
   if (ev == 0L) { warning("All censored (no failures) for ", component, " — skipping."); return(invisible(NULL)) }
 
-  # Surv obj only for survreg (KM uses explicit formula)
   surv_obj <- create_surv(data)
 
   # ---- Weibull AFT ----
@@ -98,18 +88,18 @@ run_weibull <- function(component, clock = "calendar") {
   # ---- KM (nonparametric) ----
   sf_km <- survfit(Surv(time, event) ~ 1, data = data)
 
-  # ---- Parametric Weibull curve (manual) ----
+  # ---- Parametric Weibull curve ----
   t_max  <- max(data$time, na.rm = TRUE)
   t_grid <- seq(0, t_max, length.out = 400)
   S_wb   <- exp(- (t_grid / pars$scale)^pars$shape)
   wb_df  <- data.frame(time = t_grid, surv = S_wb)
 
-  # ---- Plot: KM + Weibull overlay (risk.table OFF to avoid label noise) ----
+  # ---- Plot: KM + Weibull overlay ----
   plt <- ggsurvplot(
     sf_km,
     data = data,
     conf.int = TRUE,
-    risk.table = FALSE,     # << turn off to silence 'Strata' label warnings
+    risk.table = FALSE,   
     ggtheme = theme_minimal(),
     title = paste0("Weibull vs KM — ", toupper(component)),
     xlab = ifelse(clock=="calendar","Time (days)","Usage (hours)"),
@@ -139,7 +129,6 @@ run_weibull <- function(component, clock = "calendar") {
   ggsave(paste0("WB_diag_", component, "_", clock, ".png"),
          diag_plot, width = 6.5, height = 5, dpi = 300, device = agg_png)
 
-  # ---- Safe CSV row (no rownames) ----
   res <- list(
     component           = as.character(component),
     clock               = as.character(clock),
@@ -160,10 +149,10 @@ run_weibull <- function(component, clock = "calendar") {
     logLik_Weibull      = as.numeric(logLik(fit_wb))
   )
   out <- as.data.frame(res, stringsAsFactors = FALSE, optional = TRUE)
-  row.names(out) <- NULL  # << prevent "row names contain missing values"
+  row.names(out) <- NULL  
   write.csv(out, paste0("WB_summary_", component, "_", clock, ".csv"), row.names = FALSE)
 
-  cat("Saved PNG & CSV for:", component, "\n")
+  
 }
 
 # ========== 4) Run all three components ==========

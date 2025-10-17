@@ -11,7 +11,7 @@ suppressPackageStartupMessages({
   library(broom)
 })
 
-# Auto-detect where real data starts (skips README lines)
+# Auto-detect where real data starts 
 all_lines <- read_lines("DirtSlurper3100.csv")
 hdr_line  <- which(grepl("^Registration date,Total usage time", all_lines))[1]
 
@@ -65,7 +65,6 @@ run_cox <- function(data, label) {
   capture.output(ph,
                  file = paste0("results_cox/PHtest_", label, ".txt"))
   
-  # survival curves
   newdat <- expand.grid(pets = levels(data$pets),
                         carpet = mean(data$carpet, na.rm = TRUE))
   sf <- survfit(fit, newdata = newdat)
@@ -76,7 +75,6 @@ run_cox <- function(data, label) {
   ggsave(paste0("results_cox/Cox_", label, ".png"), p$plot, width = 7, height = 5, dpi = 300)
 }
 
-# run models
 run_cox(battery_df, "Battery")
 run_cox(ir_df, "IR")
 run_cox(impact_df, "Impact")
